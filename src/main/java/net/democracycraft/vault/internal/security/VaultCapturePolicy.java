@@ -106,14 +106,17 @@ public final class VaultCapturePolicy {
      * @param actor player performing capture
      * @param supportingBlock block the hanging is attached to
      */
-    public static Decision evaluateHangingCapture(Player actor, Block supportingBlock) {
+    public static Decision evaluateHangingCapture(Player actor, Hanging hanging, Block supportingBlock) {
         BoltService bolt = VaultStoragePlugin.getInstance().getBoltService();
         UUID originalOwner = null;
         if (bolt != null) {
             try {
-                originalOwner = bolt.getOwner(supportingBlock);
+                originalOwner = bolt.getOwner(hanging);
+                if (originalOwner == null) {
+                    originalOwner = bolt.getOwner(supportingBlock);
+                }
             } catch (Throwable t) {
-                VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error obtaining Bolt owner for block in "
+                VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error obtaining Bolt owner for hanging entity in "
                         + formatBlock(supportingBlock) + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
             }
         }

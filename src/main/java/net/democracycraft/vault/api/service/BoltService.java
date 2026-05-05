@@ -16,8 +16,10 @@ import java.util.UUID;
 public interface BoltService extends Service {
 
     UUID getOwner(Block block);
+    UUID getOwner(Entity entity);
 
     boolean isOwner(UUID playerUUID, Block block);
+    boolean isOwner(UUID playerUUID, Entity entity);
 
     List<Block> getProtectedBlocks(UUID playerUUID, BoundingBox boundingBox, World world);
 

@@ -540,7 +540,7 @@ public class VaultCaptureService {
                 Hanging hang = (Hanging) clicked;
                 Block supporting = HangingVaultSupport.resolveSupportingBlock(hang);
 
-                VaultCapturePolicy.Decision decision = VaultCapturePolicy.evaluateHangingCapture(actor, supporting);
+                VaultCapturePolicy.Decision decision = VaultCapturePolicy.evaluateHangingCapture(actor, hang, supporting);
                 if (!decision.allowed()) {
                     actor.sendMessage(MiniMessageUtil.parseOrPlain(texts.notAllowed));
                     return;
@@ -565,7 +565,7 @@ public class VaultCaptureService {
 
                 busy[0] = true;
                 cancelCooldownUntil[0] = System.currentTimeMillis() + 100L;
-                ensureValidOwnerUUID(actor.getUniqueId(), actor).thenAccept(validatedOwner -> {
+                ensureValidOwnerUUID(decision.containerOwner(), actor).thenAccept(validatedOwner -> {
                     if (validatedOwner == null) {
                         new BukkitRunnable() {
                             @Override public void run() {

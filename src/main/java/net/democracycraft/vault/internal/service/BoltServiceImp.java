@@ -65,6 +65,19 @@ public class BoltServiceImp implements BoltService {
     }
 
     /**
+     * Gets the owner of the given entity's protection, if one exists.
+     *
+     * @param entity the entity to check (not null)
+     * @return the owner's UUID, or null if the block is not protected
+     */
+    @Override
+    public @Nullable UUID getOwner(@NotNull Entity entity) {
+        Objects.requireNonNull(entity, "entity");
+        Protection protection = api.findProtection(entity);
+        return protection != null ? protection.getOwner() : null;
+    }
+
+    /**
      * Checks whether the given player is the owner of the block's protection.
      *
      * @param playerUUID the player's UUID (not null)
@@ -76,6 +89,22 @@ public class BoltServiceImp implements BoltService {
         Objects.requireNonNull(playerUUID, "playerUUID");
         Objects.requireNonNull(block, "block");
         Protection protection = api.findProtection(block);
+        UUID owner = protection != null ? protection.getOwner() : null;
+        return playerUUID.equals(owner);
+    }
+
+    /**
+     * Checks whether the given player is the owner of the entity's protection.
+     *
+     * @param playerUUID the player's UUID (not null)
+     * @param entity     the entity to check (not null)
+     * @return true if the player owns the entity's protection; false otherwise
+     */
+    @Override
+    public boolean isOwner(@NotNull UUID playerUUID, @NotNull Entity entity) {
+        Objects.requireNonNull(playerUUID, "playerUUID");
+        Objects.requireNonNull(entity, "entity");
+        Protection protection = api.findProtection(entity);
         UUID owner = protection != null ? protection.getOwner() : null;
         return playerUUID.equals(owner);
     }
