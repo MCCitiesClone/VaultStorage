@@ -104,6 +104,7 @@ public final class VaultCapturePolicy {
      * Same Bolt and WorldGuard rules as {@link #evaluate(Player, Block)}, but does not apply the
      * "hangings near block" restriction (used when vaulting the hanging entity itself).
      * @param actor player performing capture
+     * @param hanging the hanging entity being captured
      * @param supportingBlock block the hanging is attached to
      */
     public static Decision evaluateHangingCapture(Player actor, Hanging hanging, Block supportingBlock) {
