@@ -141,7 +141,7 @@ public class VaultPlacementService {
         if (!chunk.isLoaded()) chunk.load();
 
         Block target = world.getBlockAt(loc);
-        if (target.getType() != Material.AIR && target.getType() != mat) {
+        if (target.getType() != Material.AIR) {
             return new Result(false, "Target not empty.");
         }
 
