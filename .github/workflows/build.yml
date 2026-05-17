@@ -32,7 +32,7 @@ jobs:
       - name: Build
         run: |
           chmod +x ./gradlew
-          ./gradlew shadowJar
+          ./gradlew clean build
 
       - name: Collect JARs
         run: |
