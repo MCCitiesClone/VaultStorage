@@ -53,6 +53,7 @@ public final class VaultStoragePlugin extends JavaPlugin {
     private BoltService boltService;
     private MailService mailService;
     private Essentials essentials;
+    private ChestShopService chestShopService;
     private DemocracyLibApi democracyLibApi;
     private BedrockUniqueIdentifierRetriever bedrockUniqueIdentifierRetriever;
 
@@ -129,6 +130,10 @@ public final class VaultStoragePlugin extends JavaPlugin {
         if (essentials instanceof Essentials ess) {
             this.essentials = ess;
         }
+
+        // ChestShop soft dependency: real impl when present, no-op otherwise.
+        var chestShop = getServer().getPluginManager().getPlugin("ChestShop");
+        this.chestShopService = chestShop != null ? new ChestShopServiceImp() : new NoOpChestShopService();
 
         // Domain services
         this.captureService = new VaultCaptureService();
@@ -207,6 +212,11 @@ public final class VaultStoragePlugin extends JavaPlugin {
 
     public Essentials getEssentials() {
         return essentials;
+    }
+
+    /** ChestShop integration; returns a no-op implementation when ChestShop is not installed. */
+    public ChestShopService getChestShopService() {
+        return chestShopService;
     }
 
 }

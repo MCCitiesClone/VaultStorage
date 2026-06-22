@@ -32,6 +32,10 @@ repositories {
         name = "opencollab"
         url = "https://repo.opencollab.dev/main/"
     }
+    maven {
+        name = "minebench"
+        url = "https://repo.minebench.de/"
+    }
 }
 
 dependencies {
@@ -44,6 +48,7 @@ dependencies {
     compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.14")
     compileOnly("net.essentialsx:EssentialsX:2.21.2")
     compileOnly("org.geysermc.floodgate:api:2.2.4-SNAPSHOT")
+    compileOnly("com.acrobot.chestshop:chestshop:3.12.2")
 }
 
 tasks {

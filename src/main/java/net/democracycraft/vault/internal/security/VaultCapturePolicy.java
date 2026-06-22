@@ -148,77 +148,12 @@ public final class VaultCapturePolicy {
     private static Decision evaluateBlockPolicy(Player actor, Block block, UUID originalOwner, boolean hangableRestricted) {
         boolean hasOverride = VaultPermission.ACTION_PLACE_OVERRIDE.has(actor);
         boolean actorIsContainerOwner = originalOwner != null && originalOwner.equals(actor.getUniqueId());
-        WorldGuardService wgs = VaultStoragePlugin.getInstance().getWorldGuardService();
 
-        boolean actorParticipantAny = false;
-        boolean containerOwnerParticipantAny = false;
-        boolean inAnyRegion = false;
-
-        List<RegionStatus> perRegionDebug = List.of();
-
-        if (wgs != null) {
-            List<VaultRegion> regions = List.of();
-            try {
-                regions = wgs.getRegionsAt(block);
-            } catch (Throwable t) {
-                VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error obtaining WorldGuard regions for block in "
-                        + formatBlock(block) + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
-            }
-
-            inAnyRegion = !regions.isEmpty();
-            UUID actorUuid = actor.getUniqueId();
-            List<RegionStatus> debugList = new ArrayList<>();
-
-            for (var region : regions) {
-                boolean actorParticipant = false;
-                boolean containerOwnerParticipates = false;
-                try {
-                    actorParticipant = region.isPartOfRegion(actorUuid);
-                    if (originalOwner != null) {
-                        containerOwnerParticipates = region.isPartOfRegion(originalOwner);
-                    }
-                } catch (Throwable t) {
-                    VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error evaluating participation for region "
-                            + region.id() + " para bloque en " + formatBlock(block) + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
-                }
-
-                BoundingBox box;
-                try {
-                    box = region.boundingBox();
-                } catch (Throwable t) {
-                    VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error obtaining boundingBox for region "
-                            + region.id() + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
-                    debugList.add(new RegionStatus(region.id(), actorParticipant, containerOwnerParticipates));
-                    if (actorParticipant) actorParticipantAny = true;
-                    if (containerOwnerParticipates) containerOwnerParticipantAny = true;
-                    continue;
-                }
-
-                final BoundingBox currentBox = box;
-                boolean isParent = false;
-                boolean isChild = false;
-                try {
-                    isParent = regions.stream().anyMatch(r -> r != region && safeContains(currentBox, r));
-                    isChild = regions.stream().anyMatch(r -> r != region && safeContains(r.boundingBox(), region));
-                } catch (Throwable t) {
-                    VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error evaluating parent/child for region "
-                            + region.id() + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
-                }
-
-                boolean actorCountedHere = actorParticipant && !isParent;
-                if (actorCountedHere) {
-                    actorParticipantAny = true;
-                }
-
-                if (containerOwnerParticipates) {
-                    containerOwnerParticipantAny = true;
-                }
-
-                debugList.add(new RegionStatus(region.id(), actorParticipant, containerOwnerParticipates));
-            }
-
-            perRegionDebug = Collections.unmodifiableList(debugList);
-        }
+        RegionParticipation participation = computeRegionParticipation(actor, block, originalOwner);
+        boolean actorParticipantAny = participation.actorParticipantAny();
+        boolean containerOwnerParticipantAny = participation.containerOwnerParticipantAny();
+        boolean inAnyRegion = participation.inAnyRegion();
+        List<RegionStatus> perRegionDebug = participation.perRegionDebug();
 
         boolean disallowedOwnerSelf = actorParticipantAny && actorIsContainerOwner;
         boolean baseAllowed;
@@ -267,6 +202,124 @@ public final class VaultCapturePolicy {
                 originalOwner,
                 reason,
                 perRegionDebug
+        );
+    }
+
+    private record RegionParticipation(boolean inAnyRegion, boolean actorParticipantAny,
+                                       boolean containerOwnerParticipantAny, List<RegionStatus> perRegionDebug) {}
+
+    /** Scans WorldGuard regions at the block and computes actor/owner participation flags. */
+    private static RegionParticipation computeRegionParticipation(Player actor, Block block, UUID originalOwner) {
+        WorldGuardService wgs = VaultStoragePlugin.getInstance().getWorldGuardService();
+
+        boolean actorParticipantAny = false;
+        boolean containerOwnerParticipantAny = false;
+        boolean inAnyRegion = false;
+        List<RegionStatus> perRegionDebug = List.of();
+
+        if (wgs != null) {
+            List<VaultRegion> regions = List.of();
+            try {
+                regions = wgs.getRegionsAt(block);
+            } catch (Throwable t) {
+                VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error obtaining WorldGuard regions for block in "
+                        + formatBlock(block) + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
+            }
+
+            inAnyRegion = !regions.isEmpty();
+            UUID actorUuid = actor.getUniqueId();
+            List<RegionStatus> debugList = new ArrayList<>();
+
+            for (var region : regions) {
+                boolean actorParticipant = false;
+                boolean containerOwnerParticipates = false;
+                try {
+                    actorParticipant = region.isPartOfRegion(actorUuid);
+                    if (originalOwner != null) {
+                        containerOwnerParticipates = region.isPartOfRegion(originalOwner);
+                    }
+                } catch (Throwable t) {
+                    VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error evaluating participation for region "
+                            + region.id() + " para bloque en " + formatBlock(block) + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
+                }
+
+                BoundingBox box;
+                try {
+                    box = region.boundingBox();
+                } catch (Throwable t) {
+                    VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error obtaining boundingBox for region "
+                            + region.id() + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
+                    debugList.add(new RegionStatus(region.id(), actorParticipant, containerOwnerParticipates));
+                    if (actorParticipant) actorParticipantAny = true;
+                    if (containerOwnerParticipates) containerOwnerParticipantAny = true;
+                    continue;
+                }
+
+                final BoundingBox currentBox = box;
+                boolean isParent = false;
+                try {
+                    isParent = regions.stream().anyMatch(r -> r != region && safeContains(currentBox, r));
+                } catch (Throwable t) {
+                    VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error evaluating parent/child for region "
+                            + region.id() + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
+                }
+
+                boolean actorCountedHere = actorParticipant && !isParent;
+                if (actorCountedHere) {
+                    actorParticipantAny = true;
+                }
+
+                if (containerOwnerParticipates) {
+                    containerOwnerParticipantAny = true;
+                }
+
+                debugList.add(new RegionStatus(region.id(), actorParticipant, containerOwnerParticipates));
+            }
+
+            perRegionDebug = Collections.unmodifiableList(debugList);
+        }
+
+        return new RegionParticipation(inAnyRegion, actorParticipantAny, containerOwnerParticipantAny, perRegionDebug);
+    }
+
+    /**
+     * Evaluate whether the actor may remove a ChestShop sign on the given container.
+     * Same region participation rule as {@link #evaluate(Player, Block)}, but does not require a Bolt owner.
+     */
+    public static Decision evaluateChestShopSignRemoval(Player actor, Block containerBlock) {
+        BoltService bolt = VaultStoragePlugin.getInstance().getBoltService();
+        UUID originalOwner = null;
+        if (bolt != null) {
+            try {
+                originalOwner = bolt.getOwner(containerBlock);
+            } catch (Throwable t) {
+                VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Error obtaining Bolt owner for block in "
+                        + formatBlock(containerBlock) + ": " + t.getClass().getSimpleName() + " - " + t.getMessage());
+            }
+        }
+
+        boolean hasOverride = VaultPermission.ACTION_PLACE_OVERRIDE.has(actor);
+        boolean actorIsContainerOwner = originalOwner != null && originalOwner.equals(actor.getUniqueId());
+        RegionParticipation participation = computeRegionParticipation(actor, containerBlock, originalOwner);
+
+        // Same region gate as capture, but no Bolt-owner requirement.
+        boolean allowed = (participation.inAnyRegion() && participation.actorParticipantAny()) || hasOverride;
+
+        Decision.Reason reason = allowed
+                ? Decision.Reason.ALLOWED
+                : (!participation.inAnyRegion() ? Decision.Reason.NOT_IN_REGION : Decision.Reason.NOT_INVOLVED_NOT_OWNER);
+
+        return new Decision(
+                allowed,
+                hasOverride,
+                participation.actorParticipantAny(),
+                participation.containerOwnerParticipantAny(),
+                actorIsContainerOwner,
+                false,
+                allowed,
+                originalOwner,
+                reason,
+                participation.perRegionDebug()
         );
     }
 

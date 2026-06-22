@@ -4,6 +4,7 @@ main: net.democracycraft.vault.VaultStoragePlugin
 api-version: '1.21'
 authors: [ Alepando ]
 depend: [ Bolt , WorldGuard, WorldEdit, Essentials ]
+softdepend: [ ChestShop ]
 
 commands:
   vault:

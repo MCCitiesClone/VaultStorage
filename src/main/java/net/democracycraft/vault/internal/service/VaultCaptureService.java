@@ -4,6 +4,7 @@ import net.democracycraft.vault.VaultStoragePlugin;
 import net.democracycraft.vault.api.data.Dto;
 import net.democracycraft.vault.api.event.PlayerVaultEvent;
 import net.democracycraft.vault.api.service.BoltService;
+import net.democracycraft.vault.api.service.ChestShopService;
 import net.democracycraft.vault.api.service.VaultService;
 import net.democracycraft.vault.internal.data.VaultDtoImp;
 import net.democracycraft.vault.internal.mappable.VaultImp;
@@ -282,6 +283,7 @@ public class VaultCaptureService {
         public String signNotAllowed = "<red>Sign not allowed: region/block rules.</red>";
         public String containerNotAllowed = "<red>Container not allowed: region/block rules.</red>";
         public String signUnlocked = "Sign protection removed.";
+        public String chestShopSignRemoved = "ChestShop sign removed.";
         public String emptyCaptureSkipped = "Protection removed.";
         public String capturedOk = "Vault captured.";
         public String noBoltOwner = "<yellow>No Bolt owner found; you will be set as the vault owner.</yellow>";
@@ -405,11 +407,21 @@ public class VaultCaptureService {
 
                 Block captureBlock = block;
                 boolean clickedSign = isSignBlock(block);
+                ChestShopService chestShop = VaultStoragePlugin.getInstance().getChestShopService();
+                boolean clickedChestShopSign = clickedSign && chestShop.isShopSign(block);
 
                 // Sequential sign->container policy flow:
                 // 1) Evaluate sign (non-container) policy and optionally unlock sign.
                 // 2) Evaluate container policy on attached container (if present).
-                if (clickedSign) {
+                if (clickedChestShopSign) {
+                    // Shop sign is handled through its container; it is removed once the container unlocks.
+                    Block attachedContainer = resolveAttachedContainerBlock(block);
+                    if (attachedContainer == null) {
+                        busy[0] = false;
+                        return;
+                    }
+                    captureBlock = attachedContainer;
+                } else if (clickedSign) {
                     VaultCapturePolicy.Decision signDecision = VaultCapturePolicy.evaluate(actor, block);
                     UUID signOwner = signDecision.containerOwner();
                     if (signDecision.allowed()) {
@@ -432,6 +444,17 @@ public class VaultCaptureService {
                 VaultCapturePolicy.Decision decision = VaultCapturePolicy.evaluate(actor, captureBlock);
                 UUID originalOwner = decision.containerOwner();
                 if (!decision.allowed()) {
+                    // A shop sign on an empty, unprotected container can still be removed on region rights alone.
+                    if (chestShop.isAvailable() && isContainerEmpty(captureBlock)) {
+                        List<Block> shopSigns = chestShop.findShopSigns(captureBlock);
+                        if (!shopSigns.isEmpty()
+                                && VaultCapturePolicy.evaluateChestShopSignRemoval(actor, captureBlock).allowed()) {
+                            removeAttachedChestShopSigns(actor, shopSigns);
+                            actor.sendMessage(MiniMessageUtil.parseOrPlain(texts.chestShopSignRemoved));
+                            busy[0] = false;
+                            return;
+                        }
+                    }
                     actor.sendMessage(MiniMessageUtil.parseOrPlain(clickedSign ? texts.containerNotAllowed : texts.notAllowed));
                     busy[0] = false;
                     return;
@@ -442,6 +465,14 @@ public class VaultCaptureService {
                     // Only send "Protection removed" if we actually removed protection.
                     // If protectionRemoved is false, it means we sent a warning (e.g., "Vault the other side first").
                     if (outcome.protectionRemoved()) {
+                        // Drop any shop sign left on the now-unlocked container.
+                        if (chestShop.isAvailable()) {
+                            List<Block> shopSigns = chestShop.findShopSigns(captureBlock);
+                            if (!shopSigns.isEmpty()) {
+                                removeAttachedChestShopSigns(actor, shopSigns);
+                                actor.sendMessage(MiniMessageUtil.parseOrPlain(texts.chestShopSignRemoved));
+                            }
+                        }
                         actor.sendMessage(MiniMessageUtil.parseOrPlain(texts.emptyCaptureSkipped));
                     }
                     busy[0] = false;
@@ -738,6 +769,18 @@ public class VaultCaptureService {
 
     private static boolean isSignBlock(@NotNull Block block) {
         return block.getState() instanceof Sign;
+    }
+
+    /** Unlocks and removes the given shop signs, notifying ChestShop. Must run on the main thread. */
+    private void removeAttachedChestShopSigns(@NotNull Player actor, @NotNull List<Block> shopSigns) {
+        ChestShopService chestShop = VaultStoragePlugin.getInstance().getChestShopService();
+        BoltService bolt = VaultStoragePlugin.getInstance().getBoltService();
+        for (Block signBlock : shopSigns) {
+            if (bolt != null) {
+                try { bolt.removeProtection(signBlock); } catch (Throwable ignored) {}
+            }
+            chestShop.removeShopSign(actor, signBlock);
+        }
     }
 
     private static Block resolveAttachedContainerBlock(@NotNull Block signBlock) {
