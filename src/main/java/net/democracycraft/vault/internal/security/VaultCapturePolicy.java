@@ -94,11 +94,7 @@ public final class VaultCapturePolicy {
             VaultStoragePlugin.getInstance().getLogger().warning("[VaultCapturePolicy] Invalid actor UUID for player " + actor.getName() + ": " + actorUUID);
         }
 
-        // Check for Hanging (ItemFrames, Paintings) attached to or intersecting the block
-        // Non-admins are not allowed to unlock/vault the block itself while hangings remain.
-        boolean hangableRestricted = computeHangableRestricted(actor, block, originalOwner);
-
-        return evaluateBlockPolicy(actor, block, originalOwner, hangableRestricted);
+        return evaluateBlockPolicy(actor, block, originalOwner, false);
     }
 
     /**
@@ -129,21 +125,6 @@ public final class VaultCapturePolicy {
         }
 
         return evaluateBlockPolicy(actor, supportingBlock, originalOwner, false);
-    }
-
-    private static boolean computeHangableRestricted(Player actor, Block block, UUID originalOwner) {
-        if (originalOwner == null || VaultPermission.ADMIN.has(actor)) {
-            return false;
-        }
-        try {
-            var nearby = block.getWorld().getNearbyEntities(block.getBoundingBox().expand(0.2));
-            for (Entity entity : nearby) {
-                if (entity instanceof Hanging) {
-                    return true;
-                }
-            }
-        } catch (Throwable ignored) {}
-        return false;
     }
 
     private static Decision evaluateBlockPolicy(Player actor, Block block, UUID originalOwner, boolean hangableRestricted) {
