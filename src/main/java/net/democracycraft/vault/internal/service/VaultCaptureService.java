@@ -692,6 +692,11 @@ public class VaultCaptureService {
                     actor.sendActionBar(MiniMessageUtil.parseOrPlain(texts.actionBarIdle));
                     return;
                 }
+                ChestShopService chestShop = VaultStoragePlugin.getInstance().getChestShopService();
+                if (chestShop.isAvailable() && chestShop.isShopSign(target)) {
+                    Block container = resolveAttachedContainerBlock(target);
+                    if (container != null) target = container;
+                }
                 var boltSvc = VaultStoragePlugin.getInstance().getBoltService();
                 UUID owner = boltSvc != null ? boltSvc.getOwner(target) : null;
                 String ownerName = ownerDisplayNameAsync(owner);
