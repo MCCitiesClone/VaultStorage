@@ -13,7 +13,6 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -51,11 +50,6 @@ public class AutoVaultService {
         RegionKey key = new RegionKey(worldId, regionId);
         long delayTicks = Math.max(0L, plugin.getConfig().getLong(ConfigPaths.AUTOVAULT_DELAY_TICKS.getPath(), 1200L));
 
-        BukkitTask previous = pending.remove(key);
-        if (previous != null && !previous.isCancelled()) {
-            previous.cancel();
-        }
-
         BukkitTask task = new BukkitRunnable() {
             @Override public void run() {
                 // A fired task is always the current pending entry (a resubmit cancels the prior one).
@@ -63,7 +57,10 @@ public class AutoVaultService {
                 runSweep(key, initiator);
             }
         }.runTaskLater(plugin, delayTicks);
-        pending.put(key, task);
+        BukkitTask previous = pending.put(key, task);
+        if (previous != null) {
+            previous.cancel();
+        }
     }
 
     private void runSweep(@NotNull RegionKey key, @NotNull UUID initiator) {
@@ -95,10 +92,11 @@ public class AutoVaultService {
 
     private void vaultBatched(@NotNull UUID worldId, @NotNull List<DisplacedContainer> displaced, @NotNull UUID initiator) {
         VaultCaptureService captureService = plugin.getCaptureService();
-        final int perTick = Math.max(1, plugin.getConfig().getInt(ConfigPaths.SCAN_BATCH_SIZE.getPath(), 50));
+        final int maxInFlight = Math.max(1, plugin.getConfig().getInt(ConfigPaths.SCAN_BATCH_SIZE.getPath(), 50));
 
         new BukkitRunnable() {
             int index = 0;
+            int inFlight = 0; // pending async chunk loads; mutated only on the main thread
 
             @Override public void run() {
                 World world = Bukkit.getWorld(worldId);
@@ -107,19 +105,20 @@ public class AutoVaultService {
                     return;
                 }
 
-                // Launch up to perTick async chunk loads this tick; each capture runs in its completion
+                // Keep at most maxInFlight chunk loads pending; each capture runs in its completion
                 // callback (back on the main thread) so the main thread never blocks on chunk I/O.
-                int launched = 0;
-                while (index < displaced.size() && launched < perTick) {
+                while (index < displaced.size() && inFlight < maxInFlight) {
                     DisplacedContainer dc = displaced.get(index);
                     index++;
-                    launched++;
-                    world.getChunkAtAsync(dc.x() >> 4, dc.z() >> 4).thenAccept(chunk ->
-                            // Tolerant of blocks changed since the scan (non-containers just drop their protection).
-                            captureService.captureOfflineAsync(world.getBlockAt(dc.x(), dc.y(), dc.z()), initiator, dc.owner(), done -> {}));
+                    inFlight++;
+                    world.getChunkAtAsync(dc.x() >> 4, dc.z() >> 4).thenAccept(chunk -> {
+                        inFlight--;
+                        // Tolerant of blocks changed since the scan (non-containers just drop their protection).
+                        captureService.captureOfflineAsync(world.getBlockAt(dc.x(), dc.y(), dc.z()), initiator, dc.owner());
+                    });
                 }
 
-                if (index >= displaced.size()) {
+                if (index >= displaced.size() && inFlight == 0) {
                     this.cancel();
                 }
             }
@@ -128,11 +127,7 @@ public class AutoVaultService {
 
     /** Cancels all pending sweeps. Call from {@code onDisable}. */
     public void shutdown() {
-        for (BukkitTask task : new ArrayList<>(pending.values())) {
-            if (task != null && !task.isCancelled()) {
-                task.cancel();
-            }
-        }
+        pending.values().forEach(BukkitTask::cancel);
         pending.clear();
     }
 }

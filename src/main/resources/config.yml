@@ -13,9 +13,7 @@ mysql:
 # (bought/transferred or rented). A container is vaulted when its Bolt owner is not the
 # new occupant and is not a WorldGuard owner/member of the region. Requires the Realty plugin.
 auto-vault:
-  # Master switch. When false, no Realty listener is registered.
   enabled: true
   # Grace period (in server ticks, 20 = 1 second) between the occupant change and the sweep.
-  # If the region changes hands again within this window, the pending sweep is replaced.
   delay-ticks: 1200
 

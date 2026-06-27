@@ -894,18 +894,15 @@ public class VaultCaptureService {
     /**
      * Offline-safe capture: no live {@link Player} and no policy evaluation; the caller decides what to vault.
      * The vault is owned by {@code boltOwner} (falls back to {@code initiatorUuid} when null) and created by
-     * {@code initiatorUuid}. Must be called on the main thread; {@code onDoneMain} runs on the main thread
-     * with {@code true} when a vault was persisted, {@code false} otherwise.
+     * {@code initiatorUuid}. Must be called on the main thread; persistence runs async (fire-and-forget).
      */
     public void captureOfflineAsync(@NotNull Block block,
                                     @NotNull UUID initiatorUuid,
-                                    UUID boltOwner,
-                                    @NotNull Consumer<Boolean> onDoneMain) {
+                                    UUID boltOwner) {
         var plugin = VaultStoragePlugin.getInstance();
 
         CaptureOutcome outcome = captureWithDoubleChestSupport(block, boltOwner, initiatorUuid, null);
         if (outcome.empty()) {
-            onDoneMain.accept(false);
             return;
         }
 
@@ -924,7 +921,6 @@ public class VaultCaptureService {
                     "[VaultCaptureService] Offline capture aborted at " + block.getWorld().getName() + ":"
                             + block.getX() + "," + block.getY() + "," + block.getZ()
                             + " - invalid vault owner UUID: " + finalOwner);
-            onDoneMain.accept(false);
             return;
         }
 
@@ -942,13 +938,7 @@ public class VaultCaptureService {
 
                 List<VaultItemEntity> batch = toItemBatch(newId, vault.contents());
                 if (!batch.isEmpty()) vaultService.putItems(newId, batch);
-
-                new BukkitRunnable() {
-                    @Override public void run() {
-                        // No PlayerVaultEvent is fired: this is an automated capture with no player actor.
-                        onDoneMain.accept(true);
-                    }
-                }.runTask(plugin);
+                // No PlayerVaultEvent and no completion callback: this is an automated, fire-and-forget capture.
             }
         }.runTaskAsynchronously(plugin);
     }
