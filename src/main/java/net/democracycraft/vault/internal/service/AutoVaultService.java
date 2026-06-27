@@ -1,16 +1,14 @@
 package net.democracycraft.vault.internal.service;
 
 import net.democracycraft.vault.VaultStoragePlugin;
-import net.democracycraft.vault.api.data.ScanResult;
 import net.democracycraft.vault.api.region.VaultRegion;
 import net.democracycraft.vault.api.service.WorldGuardService;
 import net.democracycraft.vault.internal.util.config.ConfigPaths;
 import net.democracycraft.vault.internal.util.region.RegionKey;
 import net.democracycraft.vault.internal.util.scan.OfflineRegionScanner;
+import net.democracycraft.vault.internal.util.scan.OfflineRegionScanner.DisplacedContainer;
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
 import org.bukkit.World;
-import org.bukkit.block.Block;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.jetbrains.annotations.NotNull;
@@ -88,48 +86,40 @@ public class AutoVaultService {
         allowed.addAll(region.members());
         allowed.add(initiator);
 
-        new OfflineRegionScanner(key.worldId(), region.boundingBox(), allowed, results -> {
-            if (results == null || results.isEmpty()) {
-                return;
-            }
-            vaultBatched(results, initiator);
-        }).start();
+        List<DisplacedContainer> displaced = OfflineRegionScanner.scan(key.worldId(), region.boundingBox(), allowed);
+        if (displaced == null || displaced.isEmpty()) {
+            return;
+        }
+        vaultBatched(key.worldId(), displaced, initiator);
     }
 
-    private void vaultBatched(@NotNull List<ScanResult> results, @NotNull UUID initiator) {
+    private void vaultBatched(@NotNull UUID worldId, @NotNull List<DisplacedContainer> displaced, @NotNull UUID initiator) {
         VaultCaptureService captureService = plugin.getCaptureService();
-        final int batchSize = plugin.getConfig().getInt(ConfigPaths.SCAN_BATCH_SIZE.getPath(), 50);
+        final int perTick = Math.max(1, plugin.getConfig().getInt(ConfigPaths.SCAN_BATCH_SIZE.getPath(), 50));
 
         new BukkitRunnable() {
             int index = 0;
-            final Set<Location> processed = new HashSet<>();
 
             @Override public void run() {
-                long startTime = System.currentTimeMillis();
-                int handled = 0;
-
-                while (index < results.size() && handled < batchSize) {
-                    if (System.currentTimeMillis() - startTime > 2) {
-                        break;
-                    }
-                    ScanResult result = results.get(index);
-                    index++;
-                    handled++;
-
-                    Block block = result.block();
-                    Location loc = block.getLocation();
-                    // Skip blocks already consumed this run (e.g. the far half of a double chest).
-                    if (!processed.add(loc)) continue;
-
-                    World world = block.getWorld();
-                    if (!world.isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) {
-                        world.getChunkAt(loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-                    }
-                    // Tolerant of blocks changed since the scan (non-containers just drop their protection).
-                    captureService.captureOfflineAsync(block, initiator, result.owner(), done -> {});
+                World world = Bukkit.getWorld(worldId);
+                if (world == null) {
+                    this.cancel();
+                    return;
                 }
 
-                if (index >= results.size()) {
+                // Launch up to perTick async chunk loads this tick; each capture runs in its completion
+                // callback (back on the main thread) so the main thread never blocks on chunk I/O.
+                int launched = 0;
+                while (index < displaced.size() && launched < perTick) {
+                    DisplacedContainer dc = displaced.get(index);
+                    index++;
+                    launched++;
+                    world.getChunkAtAsync(dc.x() >> 4, dc.z() >> 4).thenAccept(chunk ->
+                            // Tolerant of blocks changed since the scan (non-containers just drop their protection).
+                            captureService.captureOfflineAsync(world.getBlockAt(dc.x(), dc.y(), dc.z()), initiator, dc.owner(), done -> {}));
+                }
+
+                if (index >= displaced.size()) {
                     this.cancel();
                 }
             }
