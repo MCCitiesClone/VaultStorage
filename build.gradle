@@ -36,6 +36,10 @@ repositories {
         name = "minebench"
         url = "https://repo.minebench.de/"
     }
+    maven {
+        name = "democracycraft"
+        url = "https://maven.democracycraft.net/releases"
+    }
 }
 
 dependencies {
@@ -49,6 +53,7 @@ dependencies {
     compileOnly("net.essentialsx:EssentialsX:2.21.2")
     compileOnly("org.geysermc.floodgate:api:2.2.4-SNAPSHOT")
     compileOnly("com.acrobot.chestshop:chestshop:3.12.2")
+    compileOnly("io.github.md5sha256:realty-paper-api:1.4.0") { transitive = false }
 }
 
 tasks {

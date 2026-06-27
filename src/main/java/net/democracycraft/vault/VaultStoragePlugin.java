@@ -10,7 +10,9 @@ import net.democracycraft.vault.internal.database.DatabaseSchema;
 import net.democracycraft.vault.internal.database.MySQLManager;
 import net.democracycraft.vault.internal.database.dao.VaultDAOImpl;
 import net.democracycraft.vault.internal.database.entity.WorldEntity;
+import net.democracycraft.vault.internal.listener.RealtyOccupantChangeListener;
 import net.democracycraft.vault.internal.service.*;
+import net.democracycraft.vault.internal.util.config.ConfigPaths;
 import net.democracycraft.vault.internal.session.BedrockUniqueIdentifierRetriever;
 import net.democracycraft.vault.internal.session.VaultSessionManager;
 import net.democracycraft.vault.internal.util.config.ConfigInitializer;
@@ -44,6 +46,7 @@ public final class VaultStoragePlugin extends JavaPlugin {
     private VaultPlacementService placementService;
     private VaultInventoryService inventoryService;
     private VaultScanService scanService;
+    private AutoVaultService autoVaultService;
 
 
     // Integration services
@@ -161,6 +164,14 @@ public final class VaultStoragePlugin extends JavaPlugin {
 
         // Validate defined permissions vs plugin.yml
         validatePermissionsMapping();
+
+        // Realty soft dependency: auto-vault containers when a region's owner/tenant changes.
+        if (getServer().getPluginManager().getPlugin("Realty") != null
+                && getConfig().getBoolean(ConfigPaths.AUTOVAULT_ENABLED.getPath(), true)) {
+            this.autoVaultService = new AutoVaultService(this);
+            getServer().getPluginManager().registerEvents(new RealtyOccupantChangeListener(autoVaultService), this);
+            getLogger().info("Realty detected: auto-vault on region occupant change enabled.");
+        }
     }
 
     private void validatePermissionsMapping() {
@@ -203,6 +214,7 @@ public final class VaultStoragePlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (this.autoVaultService != null) this.autoVaultService.shutdown();
         if (this.mysql != null) this.mysql.disconnect();
     }
 
