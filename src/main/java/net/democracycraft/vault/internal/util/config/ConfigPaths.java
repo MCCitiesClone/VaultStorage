@@ -11,7 +11,8 @@ public enum ConfigPaths {
     SCAN_CACHE_TTL_SECONDS("scan.cache-ttl-seconds"),
     SCAN_COOLDOWN_SECONDS("scan.cooldown-seconds"),
     AUTOVAULT_ENABLED("auto-vault.enabled"),
-    AUTOVAULT_DELAY_TICKS("auto-vault.delay-ticks");
+    AUTOVAULT_DELAY_TICKS("auto-vault.delay-ticks"),
+    AUTOVAULT_INCLUDE_HANGINGS("auto-vault.include-hangings");
 
     private final String path;
 

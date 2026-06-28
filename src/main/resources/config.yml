@@ -16,4 +16,8 @@ auto-vault:
   enabled: true
   # Grace period (in server ticks, 20 = 1 second) between the occupant change and the sweep.
   delay-ticks: 1200
+  # Also vault displaced Bolt-locked item frames and paintings. Finding hanging entities requires
+  # loading every chunk in the region (they are not indexed by coordinate like blocks), so disable
+  # this for very large claims if the extra chunk I/O is a concern.
+  include-hangings: true
 

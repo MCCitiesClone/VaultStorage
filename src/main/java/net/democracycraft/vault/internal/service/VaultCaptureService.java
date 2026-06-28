@@ -618,45 +618,7 @@ public class VaultCaptureService {
                     new BukkitRunnable() {
                         @Override public void run() {
                             var plugin = VaultStoragePlugin.getInstance();
-                            VaultService vaultService = plugin.getVaultService();
-                            int needed = stacks.size();
-                            var targetOpt = HangingVaultSupport.findFirstVaultWithSpace(vaultService, validatedOwner, needed);
-                            UUID vaultUuid;
-                            int startSlot;
-                            if (targetOpt.isPresent()) {
-                                var t = targetOpt.get();
-                                vaultUuid = t.vaultUuid();
-                                startSlot = t.startSlot();
-                            } else {
-                                // Note: persisted material must be a block; placement uses Block#setType (item names are invalid).
-                                var created = vaultService.createVault(
-                                        supporting.getWorld().getUID(),
-                                        actor.getUniqueId(),
-                                        supporting.getX(),
-                                        supporting.getY(),
-                                        supporting.getZ(),
-                                        validatedOwner,
-                                        Material.CHEST.name(),
-                                        null
-                                );
-                                vaultUuid = created.uuid;
-                                startSlot = 0;
-                                plugin.getLogger().info(
-                                        "[VaultCaptureService] Hanging capture created vault ID=" + vaultUuid + " owner=" + validatedOwner
-                                );
-                            }
-
-                            List<VaultItemEntity> batch = new ArrayList<>(stacks.size());
-                            int slot = startSlot;
-                            for (ItemStack stack : stacks) {
-                                VaultItemEntity vie = new VaultItemEntity();
-                                vie.vaultUuid = vaultUuid;
-                                vie.slot = slot++;
-                                vie.amount = stack.getAmount();
-                                vie.item = ItemSerialization.toBytes(stack);
-                                batch.add(vie);
-                            }
-                            vaultService.putItems(vaultUuid, batch);
+                            UUID vaultUuid = persistHangingStacks(stacks, validatedOwner, actor.getUniqueId(), supporting);
 
                             new BukkitRunnable() {
                                 @Override public void run() {
@@ -943,15 +905,73 @@ public class VaultCaptureService {
         }.runTaskAsynchronously(plugin);
     }
 
-    /** Serializes a vault's contents into persistable item rows, skipping empty slots. */
+    /**
+     * Offline-safe capture of a Bolt-locked hanging entity (item frame or painting) with no live
+     * {@link Player} and no policy evaluation. Its contents (the frame/painting plus any displayed item)
+     * are stored in a vault owned by {@code boltOwner}, merged into an existing vault when one has room,
+     * and the entity is removed (which also disposes its Bolt protection).
+     * <p>Must be called on the main thread with the entity loaded; persistence runs async.</p>
+     */
+    public void captureHangingOfflineAsync(@NotNull Hanging hang, @NotNull UUID boltOwner, @NotNull UUID initiatorUuid) {
+        List<ItemStack> stacks = HangingVaultSupport.itemStacksFrom(hang);
+        if (stacks.isEmpty()) {
+            return;
+        }
+
+        var plugin = VaultStoragePlugin.getInstance();
+        Block supporting = HangingVaultSupport.resolveSupportingBlock(hang);
+        new BukkitRunnable() {
+            @Override public void run() {
+                persistHangingStacks(stacks, boltOwner, initiatorUuid, supporting);
+                new BukkitRunnable() {
+                    @Override public void run() {
+                        if (hang.isValid()) hang.remove();
+                    }
+                }.runTask(plugin);
+            }
+        }.runTaskAsynchronously(plugin);
+    }
+
+    /**
+     * Stores hanging stacks into an existing vault owned by {@code boltOwner} that has room, or a new vault
+     * anchored at {@code supporting} and created by {@code creatorUuid}. Runs on the async persistence thread;
+     * returns the target vault id.
+     */
+    private UUID persistHangingStacks(@NotNull List<ItemStack> stacks, @NotNull UUID boltOwner, @NotNull UUID creatorUuid, @NotNull Block supporting) {
+        var plugin = VaultStoragePlugin.getInstance();
+        VaultService vaultService = plugin.getVaultService();
+        var target = HangingVaultSupport.findFirstVaultWithSpace(vaultService, boltOwner, stacks.size());
+        UUID vaultUuid;
+        int startSlot;
+        if (target.isPresent()) {
+            vaultUuid = target.get().vaultUuid();
+            startSlot = target.get().startSlot();
+        } else {
+            // Persisted material must be a block; placement uses Block#setType (item names are invalid).
+            var created = vaultService.createVault(supporting.getWorld().getUID(), creatorUuid,
+                    supporting.getX(), supporting.getY(), supporting.getZ(), boltOwner, Material.CHEST.name(), null);
+            vaultUuid = created.uuid;
+            startSlot = 0;
+            plugin.getLogger().info("[VaultCaptureService] Hanging capture created vault ID=" + vaultUuid + " owner=" + boltOwner);
+        }
+        vaultService.putItems(vaultUuid, toItemBatch(vaultUuid, stacks, startSlot));
+        return vaultUuid;
+    }
+
+    /** Serializes a vault's contents into persistable item rows starting at slot 0, skipping empty slots. */
     private static List<VaultItemEntity> toItemBatch(UUID vaultId, List<ItemStack> items) {
+        return toItemBatch(vaultId, items, 0);
+    }
+
+    /** Serializes items into persistable rows assigned consecutive slots from {@code startSlot}, skipping empty slots. */
+    private static List<VaultItemEntity> toItemBatch(UUID vaultId, List<ItemStack> items, int startSlot) {
         List<VaultItemEntity> batch = new ArrayList<>(items.size());
-        for (int idx = 0; idx < items.size(); idx++) {
-            ItemStack itemStack = items.get(idx);
+        int slot = startSlot;
+        for (ItemStack itemStack : items) {
             if (itemStack == null) continue;
             VaultItemEntity vie = new VaultItemEntity();
             vie.vaultUuid = vaultId;
-            vie.slot = idx;
+            vie.slot = slot++;
             vie.amount = itemStack.getAmount();
             vie.item = ItemSerialization.toBytes(itemStack);
             batch.add(vie);
