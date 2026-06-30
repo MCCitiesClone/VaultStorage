@@ -33,6 +33,7 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.block.data.type.WallSign;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.time.Instant;
 import java.util.*;
@@ -136,6 +137,11 @@ public class VaultCaptureService {
      * <p>This method must be called on the main thread.</p>
      */
     public VaultImp captureFromBlock(Player actor, Block block) {
+        return captureFromBlock(actor.getUniqueId(), block);
+    }
+
+    /** Player-free variant of {@link #captureFromBlock(Player, Block)}; the vault is owned by {@code vaultOwnerUuid}. */
+    public VaultImp captureFromBlock(UUID vaultOwnerUuid, Block block) {
         if (!(block.getState() instanceof Container container)) {
             throw new IllegalArgumentException("Target block is not a container.");
         }
@@ -154,8 +160,7 @@ public class VaultCaptureService {
         block.setType(Material.AIR);
 
         UUID vaultId = UUID.randomUUID();
-        UUID owner = actor.getUniqueId();
-        return new VaultImp(owner, vaultId, stacks, material, location, when, blockDataString);
+        return new VaultImp(vaultOwnerUuid, vaultId, stacks, material, location, when, blockDataString);
     }
 
     /**
@@ -179,8 +184,18 @@ public class VaultCaptureService {
      * </ul>
      */
     public CaptureOutcome captureWithDoubleChestSupport(Player actor, @NonNull Block block, UUID originalOwner) {
+        return captureWithDoubleChestSupport(block, originalOwner, actor.getUniqueId(), actor::sendMessage);
+    }
+
+    /**
+     * Player-free variant of {@link #captureWithDoubleChestSupport(Player, Block, UUID)}. The vault owner is
+     * {@code originalOwner} when non-null, else {@code finalOwnerFallback}; {@code warn} may be null to suppress notices.
+     */
+    public CaptureOutcome captureWithDoubleChestSupport(@NonNull Block block, UUID originalOwner,
+                                                        @NonNull UUID finalOwnerFallback,
+                                                        Consumer<Component> warn) {
         BoltService bolt = VaultStoragePlugin.getInstance().getBoltService();
-        UUID finalOwner = originalOwner != null ? originalOwner : actor.getUniqueId();
+        UUID finalOwner = originalOwner != null ? originalOwner : finalOwnerFallback;
 
         // 1. Non-container path: treat as empty capture (remove protection)
         if (!(block.getState() instanceof Container container)) {
@@ -201,7 +216,9 @@ public class VaultCaptureService {
             // If the target half is empty but the other half contains items, we abort the operation
             // to prevent accidental unprotection of the full chest. The user is guided to vault the non-empty side.
             if (targetIsEmpty && !otherHalfIsEmpty) {
-                actor.sendMessage(Component.text("[Vault Capture Service] You should vault the non-empty side first.").color(NamedTextColor.YELLOW));
+                if (warn != null) {
+                    warn.accept(Component.text("[Vault Capture Service] You should vault the non-empty side first.").color(NamedTextColor.YELLOW));
+                }
                 // Return empty=true so no vault is made, but protectionRemoved=false so we don't spam "Protection Removed".
                 return new CaptureOutcome(true, false, null, originalOwner, finalOwner, List.of());
             }
@@ -244,8 +261,8 @@ public class VaultCaptureService {
             }
         }
 
-        // Capture block contents into vault (removes block)
-        VaultImp vault = captureFromBlock(actor, block);
+        // VaultImp owner carries the capturing identity; persistence uses CaptureOutcome.finalOwner().
+        VaultImp vault = captureFromBlock(finalOwnerFallback, block);
 
         return new CaptureOutcome(false, true, vault, originalOwner, finalOwner, List.copyOf(reProtected));
     }
@@ -523,18 +540,7 @@ public class VaultCaptureService {
                                     "[VaultCaptureService] Vault created successfully: ID=" + newId + " Owner=" + validatedOwner + " for player " + actor.getName()
                                 );
                             }
-                            List<ItemStack> items = vault.contents();
-                            List<VaultItemEntity> batch = new ArrayList<>(items.size());
-                            for (int idx = 0; idx < items.size(); idx++) {
-                                ItemStack itemStack = items.get(idx);
-                                if (itemStack == null) continue;
-                                VaultItemEntity vie = new VaultItemEntity();
-                                vie.vaultUuid = newId;
-                                vie.slot = idx;
-                                vie.amount = itemStack.getAmount();
-                                vie.item = ItemSerialization.toBytes(itemStack);
-                                batch.add(vie);
-                            }
+                            List<VaultItemEntity> batch = toItemBatch(newId, vault.contents());
                             if (!batch.isEmpty()) {
                                 vaultService.putItems(newId, batch);
                             }
@@ -612,45 +618,7 @@ public class VaultCaptureService {
                     new BukkitRunnable() {
                         @Override public void run() {
                             var plugin = VaultStoragePlugin.getInstance();
-                            VaultService vaultService = plugin.getVaultService();
-                            int needed = stacks.size();
-                            var targetOpt = HangingVaultSupport.findFirstVaultWithSpace(vaultService, validatedOwner, needed);
-                            UUID vaultUuid;
-                            int startSlot;
-                            if (targetOpt.isPresent()) {
-                                var t = targetOpt.get();
-                                vaultUuid = t.vaultUuid();
-                                startSlot = t.startSlot();
-                            } else {
-                                // Note: persisted material must be a block; placement uses Block#setType (item names are invalid).
-                                var created = vaultService.createVault(
-                                        supporting.getWorld().getUID(),
-                                        actor.getUniqueId(),
-                                        supporting.getX(),
-                                        supporting.getY(),
-                                        supporting.getZ(),
-                                        validatedOwner,
-                                        Material.CHEST.name(),
-                                        null
-                                );
-                                vaultUuid = created.uuid;
-                                startSlot = 0;
-                                plugin.getLogger().info(
-                                        "[VaultCaptureService] Hanging capture created vault ID=" + vaultUuid + " owner=" + validatedOwner
-                                );
-                            }
-
-                            List<VaultItemEntity> batch = new ArrayList<>(stacks.size());
-                            int slot = startSlot;
-                            for (ItemStack stack : stacks) {
-                                VaultItemEntity vie = new VaultItemEntity();
-                                vie.vaultUuid = vaultUuid;
-                                vie.slot = slot++;
-                                vie.amount = stack.getAmount();
-                                vie.item = ItemSerialization.toBytes(stack);
-                                batch.add(vie);
-                            }
-                            vaultService.putItems(vaultUuid, batch);
+                            UUID vaultUuid = persistHangingStacks(stacks, validatedOwner, actor.getUniqueId(), supporting);
 
                             new BukkitRunnable() {
                                 @Override public void run() {
@@ -776,8 +744,8 @@ public class VaultCaptureService {
         return block.getState() instanceof Sign;
     }
 
-    /** Unlocks and removes the given shop signs, notifying ChestShop. Must run on the main thread. */
-    private void removeAttachedChestShopSigns(@NotNull Player actor, @NotNull List<Block> shopSigns) {
+    /** Unlocks and removes the given shop signs, notifying ChestShop. {@code actor} may be null for automated captures. Must run on the main thread. */
+    private void removeAttachedChestShopSigns(@Nullable Player actor, @NotNull List<Block> shopSigns) {
         ChestShopService chestShop = VaultStoragePlugin.getInstance().getChestShopService();
         BoltService bolt = VaultStoragePlugin.getInstance().getBoltService();
         for (Block signBlock : shopSigns) {
@@ -866,18 +834,7 @@ public class VaultCaptureService {
                             "[VaultCaptureService] Direct vault created: ID=" + newId + " Owner=" + validatedOwner + " for player " + actor.getName()
                         );
                     }
-                    List<ItemStack> items = vault.contents();
-                    List<VaultItemEntity> batch = new ArrayList<>(items.size());
-                    for (int idx = 0; idx < items.size(); idx++) {
-                        ItemStack itemStack = items.get(idx);
-                        if (itemStack == null) continue;
-                        VaultItemEntity vie = new VaultItemEntity();
-                        vie.vaultUuid = newId;
-                        vie.slot = idx;
-                        vie.amount = itemStack.getAmount();
-                        vie.item = ItemSerialization.toBytes(itemStack);
-                        batch.add(vie);
-                    }
+                    List<VaultItemEntity> batch = toItemBatch(newId, vault.contents());
                     if (!batch.isEmpty()) vaultService.putItems(newId, batch);
 
                     new BukkitRunnable(){
@@ -894,5 +851,135 @@ public class VaultCaptureService {
                 }
             }.runTaskAsynchronously(plugin);
         });
+    }
+
+    /**
+     * Offline-safe capture: no live {@link Player} and no policy evaluation; the caller decides what to vault.
+     * The vault is owned by {@code boltOwner} (falls back to {@code initiatorUuid} when null) and created by
+     * {@code initiatorUuid}. Must be called on the main thread; persistence runs async (fire-and-forget).
+     */
+    public void captureOfflineAsync(@NotNull Block block,
+                                    @NotNull UUID initiatorUuid,
+                                    UUID boltOwner,
+                                    @NotNull Runnable onVaulted) {
+        var plugin = VaultStoragePlugin.getInstance();
+
+        CaptureOutcome outcome = captureWithDoubleChestSupport(block, boltOwner, initiatorUuid, null);
+        if (outcome.empty()) {
+            return;
+        }
+
+        // Drop any ChestShop sign left on the now-captured container.
+        ChestShopService chestShop = plugin.getChestShopService();
+        if (chestShop != null && chestShop.isAvailable()) {
+            List<Block> shopSigns = chestShop.findShopSigns(block);
+            if (!shopSigns.isEmpty()) {
+                removeAttachedChestShopSigns(null, shopSigns);
+            }
+        }
+
+        UUID finalOwner = outcome.finalOwner();
+        if (!UniqueIdentifierResolver.isValidUUID(finalOwner)) {
+            plugin.getLogger().warning(
+                    "[VaultCaptureService] Offline capture aborted at " + block.getWorld().getName() + ":"
+                            + block.getX() + "," + block.getY() + "," + block.getZ()
+                            + " - invalid vault owner UUID: " + finalOwner);
+            return;
+        }
+
+        VaultImp vault = outcome.vault();
+        new BukkitRunnable() {
+            @Override public void run() {
+                VaultService vaultService = plugin.getVaultService();
+                UUID worldId = block.getWorld().getUID();
+                var created = vaultService.createVault(worldId, initiatorUuid, block.getX(), block.getY(), block.getZ(), finalOwner,
+                        vault.blockMaterial() == null ? null : vault.blockMaterial().name(),
+                        vault.blockDataString());
+                UUID newId = created.uuid;
+                plugin.getLogger().info(
+                        "[VaultCaptureService] Offline vault created: ID=" + newId + " owner=" + finalOwner + " initiator=" + initiatorUuid);
+
+                List<VaultItemEntity> batch = toItemBatch(newId, vault.contents());
+                if (!batch.isEmpty()) vaultService.putItems(newId, batch);
+                // No PlayerVaultEvent: this is an automated capture. Signal the occupant notifier that a vault was made.
+                onVaulted.run();
+            }
+        }.runTaskAsynchronously(plugin);
+    }
+
+    /**
+     * Offline-safe capture of a Bolt-locked hanging entity (item frame or painting) with no live
+     * {@link Player} and no policy evaluation. Its contents (the frame/painting plus any displayed item)
+     * are stored in a vault owned by {@code boltOwner}, merged into an existing vault when one has room,
+     * and the entity is removed (which also disposes its Bolt protection).
+     * <p>Must be called on the main thread with the entity loaded; persistence runs async.</p>
+     */
+    public void captureHangingOfflineAsync(@NotNull Hanging hang, @NotNull UUID boltOwner, @NotNull UUID initiatorUuid,
+                                           @NotNull Runnable onVaulted) {
+        List<ItemStack> stacks = HangingVaultSupport.itemStacksFrom(hang);
+        if (stacks.isEmpty()) {
+            return;
+        }
+
+        var plugin = VaultStoragePlugin.getInstance();
+        Block supporting = HangingVaultSupport.resolveSupportingBlock(hang);
+        new BukkitRunnable() {
+            @Override public void run() {
+                persistHangingStacks(stacks, boltOwner, initiatorUuid, supporting);
+                onVaulted.run();
+                new BukkitRunnable() {
+                    @Override public void run() {
+                        if (hang.isValid()) hang.remove();
+                    }
+                }.runTask(plugin);
+            }
+        }.runTaskAsynchronously(plugin);
+    }
+
+    /**
+     * Stores hanging stacks into an existing vault owned by {@code boltOwner} that has room, or a new vault
+     * anchored at {@code supporting} and created by {@code creatorUuid}. Runs on the async persistence thread;
+     * returns the target vault id.
+     */
+    private UUID persistHangingStacks(@NotNull List<ItemStack> stacks, @NotNull UUID boltOwner, @NotNull UUID creatorUuid, @NotNull Block supporting) {
+        var plugin = VaultStoragePlugin.getInstance();
+        VaultService vaultService = plugin.getVaultService();
+        var target = HangingVaultSupport.findFirstVaultWithSpace(vaultService, boltOwner, stacks.size());
+        UUID vaultUuid;
+        int startSlot;
+        if (target.isPresent()) {
+            vaultUuid = target.get().vaultUuid();
+            startSlot = target.get().startSlot();
+        } else {
+            // Persisted material must be a block; placement uses Block#setType (item names are invalid).
+            var created = vaultService.createVault(supporting.getWorld().getUID(), creatorUuid,
+                    supporting.getX(), supporting.getY(), supporting.getZ(), boltOwner, Material.CHEST.name(), null);
+            vaultUuid = created.uuid;
+            startSlot = 0;
+            plugin.getLogger().info("[VaultCaptureService] Hanging capture created vault ID=" + vaultUuid + " owner=" + boltOwner);
+        }
+        vaultService.putItems(vaultUuid, toItemBatch(vaultUuid, stacks, startSlot));
+        return vaultUuid;
+    }
+
+    /** Serializes a vault's contents into persistable item rows starting at slot 0, skipping empty slots. */
+    private static List<VaultItemEntity> toItemBatch(UUID vaultId, List<ItemStack> items) {
+        return toItemBatch(vaultId, items, 0);
+    }
+
+    /** Serializes items into persistable rows assigned consecutive slots from {@code startSlot}, skipping empty slots. */
+    private static List<VaultItemEntity> toItemBatch(UUID vaultId, List<ItemStack> items, int startSlot) {
+        List<VaultItemEntity> batch = new ArrayList<>(items.size());
+        int slot = startSlot;
+        for (ItemStack itemStack : items) {
+            if (itemStack == null) continue;
+            VaultItemEntity vie = new VaultItemEntity();
+            vie.vaultUuid = vaultId;
+            vie.slot = slot++;
+            vie.amount = itemStack.getAmount();
+            vie.item = ItemSerialization.toBytes(itemStack);
+            batch.add(vie);
+        }
+        return batch;
     }
 }

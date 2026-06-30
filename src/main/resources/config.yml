@@ -9,3 +9,17 @@ mysql:
   password: ""
   useSSL: false
 
+# Automatically vault Bolt-locked containers when a Realty region changes occupant
+# (bought/transferred or rented). A container is vaulted when its Bolt owner is not the
+# new occupant and is not a WorldGuard owner/member of the region. Requires the Realty plugin.
+auto-vault:
+  enabled: true
+  # Grace period (in server ticks, 20 = 1 second) between the occupant change and the sweep.
+  delay-ticks: 1200
+  # Vaukt Bolt-locked item frames and paintings.
+  include-hangings: true
+  # When a sweep actually vaults the previous occupant's locked items, tell the new occupant
+  # (if online). Sent once per sweep, only when something was vaulted. Accepts MiniMessage.
+  notify-occupant: true
+  notify-message: "<yellow>Locked containers and items left here by the previous occupant have been cleared into their vault storage.</yellow>"
+

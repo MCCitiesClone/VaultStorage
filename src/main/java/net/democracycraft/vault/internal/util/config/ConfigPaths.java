@@ -9,7 +9,12 @@ public enum ConfigPaths {
     MYSQL_USE_SSL("mysql.useSSL"),
     SCAN_BATCH_SIZE("scan.batch-size"),
     SCAN_CACHE_TTL_SECONDS("scan.cache-ttl-seconds"),
-    SCAN_COOLDOWN_SECONDS("scan.cooldown-seconds");
+    SCAN_COOLDOWN_SECONDS("scan.cooldown-seconds"),
+    AUTOVAULT_ENABLED("auto-vault.enabled"),
+    AUTOVAULT_DELAY_TICKS("auto-vault.delay-ticks"),
+    AUTOVAULT_INCLUDE_HANGINGS("auto-vault.include-hangings"),
+    AUTOVAULT_NOTIFY_OCCUPANT("auto-vault.notify-occupant"),
+    AUTOVAULT_NOTIFY_MESSAGE("auto-vault.notify-message");
 
     private final String path;
 
