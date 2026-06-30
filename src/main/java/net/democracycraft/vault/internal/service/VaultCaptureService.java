@@ -860,7 +860,8 @@ public class VaultCaptureService {
      */
     public void captureOfflineAsync(@NotNull Block block,
                                     @NotNull UUID initiatorUuid,
-                                    UUID boltOwner) {
+                                    UUID boltOwner,
+                                    @NotNull Runnable onVaulted) {
         var plugin = VaultStoragePlugin.getInstance();
 
         CaptureOutcome outcome = captureWithDoubleChestSupport(block, boltOwner, initiatorUuid, null);
@@ -900,7 +901,8 @@ public class VaultCaptureService {
 
                 List<VaultItemEntity> batch = toItemBatch(newId, vault.contents());
                 if (!batch.isEmpty()) vaultService.putItems(newId, batch);
-                // No PlayerVaultEvent and no completion callback: this is an automated, fire-and-forget capture.
+                // No PlayerVaultEvent: this is an automated capture. Signal the occupant notifier that a vault was made.
+                onVaulted.run();
             }
         }.runTaskAsynchronously(plugin);
     }
@@ -912,7 +914,8 @@ public class VaultCaptureService {
      * and the entity is removed (which also disposes its Bolt protection).
      * <p>Must be called on the main thread with the entity loaded; persistence runs async.</p>
      */
-    public void captureHangingOfflineAsync(@NotNull Hanging hang, @NotNull UUID boltOwner, @NotNull UUID initiatorUuid) {
+    public void captureHangingOfflineAsync(@NotNull Hanging hang, @NotNull UUID boltOwner, @NotNull UUID initiatorUuid,
+                                           @NotNull Runnable onVaulted) {
         List<ItemStack> stacks = HangingVaultSupport.itemStacksFrom(hang);
         if (stacks.isEmpty()) {
             return;
@@ -923,6 +926,7 @@ public class VaultCaptureService {
         new BukkitRunnable() {
             @Override public void run() {
                 persistHangingStacks(stacks, boltOwner, initiatorUuid, supporting);
+                onVaulted.run();
                 new BukkitRunnable() {
                     @Override public void run() {
                         if (hang.isValid()) hang.remove();

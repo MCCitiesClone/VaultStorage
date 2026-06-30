@@ -5,6 +5,7 @@ import net.democracycraft.vault.api.region.VaultRegion;
 import net.democracycraft.vault.api.service.BoltService;
 import net.democracycraft.vault.api.service.WorldGuardService;
 import net.democracycraft.vault.internal.util.config.ConfigPaths;
+import net.democracycraft.vault.internal.util.minimessage.MiniMessageUtil;
 import net.democracycraft.vault.internal.util.region.RegionKey;
 import net.democracycraft.vault.internal.util.scan.OfflineRegionScanner;
 import net.democracycraft.vault.internal.util.scan.OfflineRegionScanner.DisplacedContainer;
@@ -15,6 +16,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Hanging;
 import org.bukkit.entity.ItemFrame;
 import org.bukkit.entity.Painting;
+import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.BoundingBox;
@@ -27,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
@@ -73,6 +76,35 @@ public class AutoVaultService {
         }
     }
 
+    /**
+     * Builds the callback the capture service runs whenever it actually vaults one of the previous occupant's
+     * locks during this sweep. The first such call (and only the first) tells the new occupant, if online and
+     * notifications are enabled, that those items have been moved to vault storage. Thread-safe and may be
+     * invoked from async capture tasks; the message send is hopped back onto the main thread.
+     */
+    private Runnable vaultedNotifier(@NotNull UUID initiator) {
+        if (!plugin.getConfig().getBoolean(ConfigPaths.AUTOVAULT_NOTIFY_OCCUPANT.getPath(), true)) {
+            return () -> {};
+        }
+        AtomicBoolean sent = new AtomicBoolean(false);
+        return () -> {
+            if (!sent.compareAndSet(false, true)) {
+                return;
+            }
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                Player occupant = Bukkit.getPlayer(initiator);
+                if (occupant == null) {
+                    return;
+                }
+                String template = plugin.getConfig().getString(ConfigPaths.AUTOVAULT_NOTIFY_MESSAGE.getPath());
+                if (template == null || template.isBlank()) {
+                    return;
+                }
+                occupant.sendMessage(MiniMessageUtil.parseOrPlain(template));
+            });
+        };
+    }
+
     private void runSweep(@NotNull RegionKey key, @NotNull UUID initiator) {
         World world = Bukkit.getWorld(key.worldId());
         if (world == null) {
@@ -93,30 +125,35 @@ public class AutoVaultService {
         allowed.addAll(region.members());
         allowed.add(initiator);
 
+        // Shared across both passes so the occupant is messaged at most once per sweep.
+        Runnable onVaulted = vaultedNotifier(initiator);
+
         List<DisplacedContainer> displaced = OfflineRegionScanner.scan(key.worldId(), region.boundingBox(), allowed);
         if (displaced != null && !displaced.isEmpty()) {
-            vaultBlocks(key.worldId(), displaced, initiator);
+            vaultBlocks(key.worldId(), displaced, initiator, onVaulted);
         }
         if (plugin.getConfig().getBoolean(ConfigPaths.AUTOVAULT_INCLUDE_HANGINGS.getPath(), true)) {
-            vaultHangings(key.worldId(), region.boundingBox(), allowed, initiator);
+            vaultHangings(key.worldId(), region.boundingBox(), allowed, initiator, onVaulted);
         }
     }
 
     /** Vaults each displaced container, loading its chunk asynchronously. */
-    private void vaultBlocks(@NotNull UUID worldId, @NotNull List<DisplacedContainer> displaced, @NotNull UUID initiator) {
+    private void vaultBlocks(@NotNull UUID worldId, @NotNull List<DisplacedContainer> displaced, @NotNull UUID initiator,
+                             @NotNull Runnable onVaulted) {
         VaultCaptureService captureService = plugin.getCaptureService();
         forEachChunkPaced(worldId, displaced,
                 dc -> new int[]{dc.x() >> 4, dc.z() >> 4},
                 (world, chunk, dc) ->
                         // Tolerant of blocks changed since the scan (non-containers just drop their protection).
-                        captureService.captureOfflineAsync(world.getBlockAt(dc.x(), dc.y(), dc.z()), initiator, dc.owner()));
+                        captureService.captureOfflineAsync(world.getBlockAt(dc.x(), dc.y(), dc.z()), initiator, dc.owner(), onVaulted));
     }
 
     /**
      * Vaults displaced item frames and paintings across the region. Entity protections are not indexed
      * by coordinate, so every chunk in the region's bounds is loaded and its hanging entities inspected.
      */
-    private void vaultHangings(@NotNull UUID worldId, @NotNull BoundingBox box, @NotNull Set<UUID> allowed, @NotNull UUID initiator) {
+    private void vaultHangings(@NotNull UUID worldId, @NotNull BoundingBox box, @NotNull Set<UUID> allowed, @NotNull UUID initiator,
+                               @NotNull Runnable onVaulted) {
         VaultCaptureService captureService = plugin.getCaptureService();
         BoltService bolt = plugin.getBoltService();
 
@@ -138,7 +175,7 @@ public class AutoVaultService {
                         if (!(entity instanceof ItemFrame) && !(entity instanceof Painting)) continue;
                         UUID owner = bolt.getOwner(entity);
                         if (owner == null || allowed.contains(owner)) continue;
-                        captureService.captureHangingOfflineAsync((Hanging) entity, owner, initiator);
+                        captureService.captureHangingOfflineAsync((Hanging) entity, owner, initiator, onVaulted);
                     }
                 });
     }

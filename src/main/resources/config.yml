@@ -18,4 +18,8 @@ auto-vault:
   delay-ticks: 1200
   # Vaukt Bolt-locked item frames and paintings.
   include-hangings: true
+  # When a sweep actually vaults the previous occupant's locked items, tell the new occupant
+  # (if online). Sent once per sweep, only when something was vaulted. Accepts MiniMessage.
+  notify-occupant: true
+  notify-message: "<yellow>Locked containers and items left here by the previous occupant have been cleared into their vault storage.</yellow>"
 

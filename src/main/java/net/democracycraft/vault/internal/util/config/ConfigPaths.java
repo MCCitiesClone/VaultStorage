@@ -12,7 +12,9 @@ public enum ConfigPaths {
     SCAN_COOLDOWN_SECONDS("scan.cooldown-seconds"),
     AUTOVAULT_ENABLED("auto-vault.enabled"),
     AUTOVAULT_DELAY_TICKS("auto-vault.delay-ticks"),
-    AUTOVAULT_INCLUDE_HANGINGS("auto-vault.include-hangings");
+    AUTOVAULT_INCLUDE_HANGINGS("auto-vault.include-hangings"),
+    AUTOVAULT_NOTIFY_OCCUPANT("auto-vault.notify-occupant"),
+    AUTOVAULT_NOTIFY_MESSAGE("auto-vault.notify-message");
 
     private final String path;
 
