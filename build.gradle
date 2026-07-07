@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id("com.gradleup.shadow") version "9.5.1"
     id("xyz.jpenilla.run-paper") version "2.3.1"
 }
 
@@ -71,6 +72,19 @@ tasks {
         // This is the only required configuration besides applying the plugin.
         // Your plugin's jar (or shadowJar if present) will be used automatically.
         minecraftVersion("26.1.1")
+    }
+
+    // DemocracyLib is a library (no plugin.yml), so it must be bundled into the
+    // plugin jar. Make the shaded jar the primary artifact (no classifier) and
+    // demote the plain jar so it is excluded from release collection.
+    shadowJar {
+        archiveClassifier.set('')
+    }
+    jar {
+        archiveClassifier.set('plain')
+    }
+    build {
+        dependsOn(shadowJar)
     }
 }
 
