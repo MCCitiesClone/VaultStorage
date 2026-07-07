@@ -1,0 +1,91 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # Only bump the version on a real push to the default branch,
+      # not on pull requests or manual dispatch.
+      - name: Bump version
+        id: bump
+        if: github.event_name == 'push'
+        run: |
+          current=$(grep -oP "^version = '\K[^']+" build.gradle)
+          IFS='.' read -r major minor patch <<< "$current"
+          patch=$((patch + 1))
+          new="${major}.${minor}.${patch}"
+          sed -i "s/^version = '.*'/version = '${new}'/" build.gradle
+          sed -i "s/^version: '.*'/version: '${new}'/" src/main/resources/plugin.yml
+          echo "version=${new}" >> "$GITHUB_OUTPUT"
+          echo "Bumped ${current} -> ${new}"
+
+      - name: Build
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean build
+
+      - name: Collect JAR
+        run: |
+          mkdir -p jars
+          find . -path "*/build/libs/*.jar" -type f \
+            ! -name "*-sources.jar" \
+            ! -name "*-javadoc.jar" \
+            ! -name "*-tests.jar" \
+            ! -name "*-plain.jar" \
+            -exec cp {} jars/ \;
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: VaultStorage-${{ github.sha }}
+          path: jars/*.jar
+          if-no-files-found: error
+          retention-days: 14
+
+      # Commit the bumped version and tag it. Pushes made with GITHUB_TOKEN
+      # do not trigger new workflow runs, so this will not loop.
+      - name: Commit & tag version bump
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: bump version to ${VERSION} [skip ci]"
+          git tag "v${VERSION}"
+          git push origin HEAD:"${GITHUB_REF_NAME}" --follow-tags
+
+      - name: Create release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.bump.outputs.version }}
+          name: VaultStorage v${{ steps.bump.outputs.version }}
+          generate_release_notes: true
+          files: jars/*.jar
